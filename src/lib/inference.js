@@ -10,7 +10,7 @@
 import * as ort from 'onnxruntime-web'
 
 // Keep it robust across machines: WASM backend, multi-threaded when available.
-ort.env.wasm.numThreads = 1
+ort.env.wasm.numThreads = Math.min(4, (navigator.hardwareConcurrency || 2))
 ort.env.wasm.simd = true
 
 const IMAGENET_MEAN = [0.485, 0.456, 0.406]

@@ -1,0 +1,8 @@
+Swapping in new models later
+I wrote a complete step-by-step guide, MODEL_UPDATES.md, included in the source. The short version:
+Your models live in public/models/ as acorn_count.onnx and acorn_type.onnx. To swap in a retrained model:
+
+Convert your new .pt/.pth to ONNX — the guide has the exact copy-paste Python for both (YOLOv8 is one line: YOLO("new.pt").export(format="onnx", imgsz=640, opset=13)).
+Drop the file into public/models/ with the same name.
+Optionally edit config.json to retune the confidence threshold — no code changes needed.
+git push — done.

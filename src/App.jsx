@@ -4,9 +4,11 @@ import {
   CheckCircle2, Upload, X, FolderOpen, Loader2, Download, RefreshCw,
   Eye, Tag, BarChart2, AlertTriangle, WifiOff, ArrowLeft
 } from 'lucide-react'
+import { List as ListIcon } from 'lucide-react'
 import { warmup, runAcornType, runAcornCount, greenFraction, loadConfig } from './lib/inference'
 import { loadImage, extractTreeNumber, extractGPS, exportCSV, exportXLSX } from './lib/utils'
 import DetectionViewer from './components/DetectionViewer'
+import MapView from './components/MapView'
 
 const MODELS = [
   { type: 'acorn_count', label: 'Acorn Count', Icon: Hash,
@@ -326,12 +328,7 @@ function Processing({ progress, dlProgress, model }) {
 
 function Results({ results, model, onNew }) {
   const [viewer, setViewer] = useState(null)
-  const [offline, setOffline] = useState(!navigator.onLine)
-  useEffect(() => {
-    const on = () => setOffline(false), off = () => setOffline(true)
-    window.addEventListener('online', on); window.addEventListener('offline', off)
-    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
-  }, [])
+  const [view, setView] = useState('list')   // list | map
 
   const valid = results.filter(r => r.valid)
   const isDet = valid.some(r => r.kind === 'detector')
@@ -348,15 +345,30 @@ function Results({ results, model, onNew }) {
             <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 100, background: '#dcf5e6', color: '#155432' }}>avg {avg}/tree</span>
           </>}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* List / Map toggle */}
+          <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--color-border)' }}>
+            {[['list', ListIcon, 'List'], ['map', MapIcon, 'Map']].map(([v, Ic, lbl]) => (
+              <button key={v} onClick={() => setView(v)}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 500,
+                  border: 'none', cursor: 'pointer',
+                  background: view === v ? '#1b4332' : '#fff', color: view === v ? '#fff' : '#6b8f77' }}>
+                <Ic size={13} /> {lbl}
+              </button>
+            ))}
+          </div>
           <button className="btn-secondary" style={{ fontSize: 12, padding: '6px 12px' }} onClick={() => exportCSV(results)}><Download size={13} /> CSV</button>
           <button className="btn-secondary" style={{ fontSize: 12, padding: '6px 12px' }} onClick={() => exportXLSX(results)}><Download size={13} /> Excel</button>
           <button className="btn-primary" style={{ fontSize: 12, padding: '6px 12px' }} onClick={onNew}><RefreshCw size={13} /> New</button>
         </div>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {results.map(r => <ResultCard key={r.imageId} r={r} onView={() => setViewer(r)} />)}
-      </div>
+      {view === 'map' ? (
+        <div style={{ flex: 1, overflow: 'hidden' }}><MapView results={results} /></div>
+      ) : (
+        <div style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {results.map(r => <ResultCard key={r.imageId} r={r} onView={() => setViewer(r)} />)}
+        </div>
+      )}
       {viewer && <DetectionViewer result={viewer} onClose={() => setViewer(null)} />}
     </div>
   )
