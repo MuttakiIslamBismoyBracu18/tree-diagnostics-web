@@ -1,0 +1,5 @@
+{
+  "acorn_count": { "conf_threshold": 0.17, "nms_iou": 0.4, "tile_size": 640, "tile_stride": 576,
+                   "calibration": { "a": 1.0, "b": 0.0 }, "use_calibration": false },
+  "acorn_type":  { "classes": ["Heavy","Medium","Light"], "input_size": 224 }
+}
