@@ -1,12 +1,12 @@
-# ============================================================
-#  Auto-build & deploy the web app to GitHub Pages on every push.
+# ============================================================================
+#  Build & deploy Tree Diagnostics Web to GitHub Pages on every push to main.
+#  This is the ONLY deployment workflow — the old main.yml / pages.yml /
+#  jekyll-gh-pages.yml were duplicates racing on the same concurrency group.
 #
-#  ONE-TIME SETUP (60 seconds):
-#    GitHub repo → Settings → Pages → "Build and deployment"
-#      → Source: "GitHub Actions"   (NOT "Deploy from a branch")
-#    Then just: git add -A && git commit -m "update" && git push
-#  Every push to main rebuilds and redeploys automatically.
-# ============================================================
+#  ONE-TIME SETUP:
+#    GitHub repo -> Settings -> Pages -> Build and deployment
+#      -> Source: "GitHub Actions"   (NOT "Deploy from a branch")
+# ============================================================================
 name: Deploy Tree Diagnostics Web
 
 on:
@@ -19,9 +19,10 @@ permissions:
   pages: write
   id-token: write
 
+# Never cancel an in-progress production deploy.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -34,6 +35,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: touch dist/.nojekyll        # stop Pages from Jekyll-processing the build
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

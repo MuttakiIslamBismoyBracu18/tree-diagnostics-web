@@ -48,10 +48,24 @@ export async function getSession(type, onProgress) {
   let pos = 0
   for (const c of chunks) { buf.set(c, pos); pos += c.length }
 
-  const session = await ort.InferenceSession.create(buf.buffer, {
-    executionProviders: ['wasm'],
-    graphOptimizationLevel: 'all',
-  })
+  // Prefer WebGPU (5–20× faster than WASM for convnets); fall back to WASM.
+  // NOTE: if the console logs a WASM fallback and your browser DOES support
+  // WebGPU, change the import at the top of this file to:
+  //     import * as ort from 'onnxruntime-web/webgpu'
+  // so the WebGPU backend artifacts are actually bundled.
+  let session
+  try {
+    session = await ort.InferenceSession.create(buf.buffer, {
+      executionProviders: ['webgpu', 'wasm'],
+      graphOptimizationLevel: 'all',
+    })
+  } catch (e) {
+    console.warn('[inference] WebGPU unavailable, using WASM:', e)
+    session = await ort.InferenceSession.create(buf.buffer, {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all',
+    })
+  }
   _sessions[type] = session
   return session
 }
@@ -66,13 +80,20 @@ export async function warmup(onProgress) {
 // ============================================================================
 //  Image helpers
 // ============================================================================
-// Draw an (optionally cropped) region of an image into a canvas at target size.
+// Draw an (optionally cropped) region of an image into a REUSED canvas at
+// target size. Reusing one canvas avoids allocating a fresh backing buffer for
+// every tile (a large image = dozens of tiles = hundreds of MB of GC churn).
+let _canvas = null, _ctx = null
 function regionToCanvas(img, sx, sy, sw, sh, tw, th) {
-  const c = document.createElement('canvas')
-  c.width = tw; c.height = th
-  const ctx = c.getContext('2d', { willReadFrequently: true })
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th)
-  return ctx.getImageData(0, 0, tw, th)
+  if (!_canvas) {
+    _canvas = document.createElement('canvas')
+    _ctx = _canvas.getContext('2d', { willReadFrequently: true })
+  }
+  if (_canvas.width !== tw || _canvas.height !== th) {
+    _canvas.width = tw; _canvas.height = th
+  }
+  _ctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th)
+  return _ctx.getImageData(0, 0, tw, th)
 }
 
 // ============================================================================
@@ -135,16 +156,20 @@ export async function runAcornCount(img, onTileProgress) {
   let doneTiles = 0
   const allBoxes = []   // [x1,y1,x2,y2,score] in full-image coords
 
+  // Allocate the input buffer ONCE and reuse it — it is fully overwritten each
+  // tile, so there is no need to reallocate ~4.9 MB per tile.
+  const plane = tile * tile
+  const input = new Float32Array(3 * plane)
+
   for (const top of tops) {
     for (const left of lefts) {
       const sw = Math.min(tile, W - left)
       const sh = Math.min(tile, H - top)
-      // Draw the tile region scaled into a full 640x640 (letterbox by scaling;
-      // model was trained on 640 tiles so we scale the region to 640).
+      // Tile origins are snapped to the edge above, so sw === sh === tile for
+      // real drone imagery — the region is drawn 1:1 at native scale, matching
+      // the Python pipeline exactly (no distortion).
       const { data } = regionToCanvas(img, left, top, sw, sh, tile, tile)
 
-      const input = new Float32Array(3 * tile * tile)
-      const plane = tile * tile
       for (let i = 0; i < plane; i++) {
         input[i]             = data[i * 4]     / 255
         input[plane + i]     = data[i * 4 + 1] / 255
@@ -176,7 +201,13 @@ export async function runAcornCount(img, onTileProgress) {
     }
   }
 
-  const kept = nms(allBoxes, iou)
+  // IoU-NMS misses seam duplicates: one acorn on a tile boundary is detected in
+  // two tiles as two ~32px boxes whose IoU is below the NMS threshold, so both
+  // survive. A center-distance merge removes those. This mirrors the 15px
+  // click-dedup used to build the ground truth, so two centers closer than the
+  // threshold are — by the GT's own definition — a single acorn.
+  // Set `center_dedup_px` to ~14 in config.json to enable; 0 (default) = off.
+  const kept = centerDedup(nms(allBoxes, iou), cfg.center_dedup_px ?? 0)
   let count = kept.length
   if (cfg.use_calibration) {
     const a = cfg.calibration?.a ?? 1, b = cfg.calibration?.b ?? 0
@@ -201,6 +232,26 @@ function nms(boxes, iouThresh) {
     }
   }
   return keep
+}
+
+// Greedy center-distance suppression (keeps highest-confidence box in each
+// cluster of centers within `minDist` px). No-op when minDist <= 0.
+function centerDedup(boxes, minDist) {
+  if (!minDist || minDist <= 0 || boxes.length < 2) return boxes
+  const order = boxes.map((_, i) => i).sort((a, b) => boxes[b][4] - boxes[a][4])
+  const cx = boxes.map(b => (b[0] + b[2]) / 2)
+  const cy = boxes.map(b => (b[1] + b[3]) / 2)
+  const d2 = minDist * minDist
+  const keep = []
+  for (const i of order) {
+    let dup = false
+    for (const k of keep) {
+      const dx = cx[i] - cx[k], dy = cy[i] - cy[k]
+      if (dx * dx + dy * dy < d2) { dup = true; break }
+    }
+    if (!dup) keep.push(i)
+  }
+  return keep.map(i => boxes[i])
 }
 
 function iouOf(a, b) {
